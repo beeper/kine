@@ -238,6 +238,7 @@ build-apiserver-tests() {
   # fix too-short test helper timeout that fails under load
   sed -i 's|waitTimeout = 100 * waitDelay|waitTimeout = 500 * waitDelay|' pkg/storage/etcd3/compact_test.go
   go mod edit --replace github.com/k3s-io/kine=$KINEPATH
+  go mod edit --replace github.com/rqlite/rqlite-go-http=github.com/hifi/rqlite-go-http@v0.0.0-20260516081207-a6d438cc1528
   go mod tidy
   go test -c -o $KINEPATH/bin/ -tags nats ./pkg/storage/etcd3/...
   cd $KINEPATH

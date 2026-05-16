@@ -25,6 +25,9 @@ echo "Did test-run-sqlite $?"
 . ./scripts/test-run-litestream
 echo "Did test-run-litestream $?"
 
+. ./scripts/test-run-rqlite
+echo "Did test-run-rqlite $?"
+
 . ./scripts/test-run-mysql
 echo "Did test-run-mysql $?"
 

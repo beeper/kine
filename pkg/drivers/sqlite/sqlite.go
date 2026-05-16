@@ -5,6 +5,7 @@ package sqlite
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"os"
 	"strings"
@@ -17,6 +18,7 @@ import (
 	"github.com/k3s-io/kine/pkg/server"
 	"github.com/k3s-io/kine/pkg/util"
 	"github.com/mattn/go-sqlite3"
+	"github.com/rqlite/rqlite-go-http/stdlib"
 	"github.com/sirupsen/logrus"
 )
 
@@ -53,6 +55,11 @@ func NewWithLitestream(ctx context.Context, wg *sync.WaitGroup, cfg *drivers.Con
 	return false, backend, err
 }
 
+func NewWithRqlite(ctx context.Context, wg *sync.WaitGroup, cfg *drivers.Config) (bool, server.Backend, error) {
+	backend, _, err := NewVariant(ctx, wg, "rqlite", cfg, false)
+	return false, backend, err
+}
+
 func NewVariant(ctx context.Context, wg *sync.WaitGroup, driverName string, cfg *drivers.Config, litestream bool) (server.Backend, *generic.Generic, error) {
 	dataSourceName := cfg.DataSourceName
 	if dataSourceName == "" {
@@ -71,6 +78,12 @@ func NewVariant(ctx context.Context, wg *sync.WaitGroup, driverName string, cfg 
 		noCompactCheckpoint = true
 		noAutoCheckpoint = true
 		noStartupVacuum = true
+	} else if driverName == "rqlite" {
+		logrus.Infof("Rqlite compatibility options enabled (manual checkpointing and startup VACUUM disabled)")
+		noCompactCheckpoint = true
+		noStartupVacuum = true
+
+		dataSourceName = "http://" + dataSourceName
 	}
 
 	dialect, err := generic.Open(ctx, wg, driverName, dataSourceName, cfg.ConnectionPoolConfig, "?", false, cfg.MetricsRegisterer)
@@ -104,6 +117,9 @@ func NewVariant(ctx context.Context, wg *sync.WaitGroup, driverName string, cfg 
 	}
 	dialect.TranslateErr = func(err error) error {
 		if err, ok := err.(sqlite3.Error); ok && err.ExtendedCode == sqlite3.ErrConstraintUnique {
+			return server.ErrKeyExists
+		}
+		if errors.Is(err, stdlib.ErrQuery) && strings.Contains(err.Error(), "UNIQUE constraint failed") {
 			return server.ErrKeyExists
 		}
 		return err
@@ -169,8 +185,12 @@ func init() {
 			return conn.SetFileControlInt("main", sqlite3.SQLITE_FCNTL_PERSIST_WAL, 1)
 		},
 	})
+	sql.Register("rqlite", &stdlib.Driver{
+		AllowQueryInTxn: true,
+	})
 
 	drivers.Register("sqlite", New)
 	drivers.Register("litestream", NewWithLitestream)
+	drivers.Register("rqlite", NewWithRqlite)
 	drivers.SetDefault("sqlite")
 }

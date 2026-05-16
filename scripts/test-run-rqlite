@@ -1,0 +1,12 @@
+#!/bin/bash
+start-test() {
+    local ip=$(cat $TEST_DIR/databases/*/metadata/ip)
+    local port=4001
+    KINE_IMAGE=$IMAGE KINE_ENDPOINT="rqlite://" run-apiserver-tests
+    KINE_IMAGE=$IMAGE KINE_ENDPOINT="rqlite://${ip}:4001" provision-kine
+    local kine_url=$(cat $TEST_DIR/kine/*/metadata/url)
+    K3S_DATASTORE_ENDPOINT=$kine_url provision-cluster
+}
+export -f start-test
+
+LABEL=rqlite DB_PASSWORD_ENV=foo DB_IMAGE=rqlite/rqlite:latest run-test

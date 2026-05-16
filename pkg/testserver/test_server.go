@@ -4,8 +4,10 @@ import (
 	"context"
 	"crypto/sha256"
 	"fmt"
+	"net/http"
 	"net/url"
 	"os"
+	"os/exec"
 	"strings"
 	"sync"
 	"testing"
@@ -60,6 +62,12 @@ func RunEtcd(t testing.TB, cfg *embed.Config) *kubernetes.Client {
 	config.NotifyInterval = cfg.ExperimentalWatchProgressNotifyInterval
 	config.CompactInterval = 0
 	config.CompactMinRetain = 0
+
+	// rqlite is a single-database server; isolate per test by spawning a dedicated
+	// container instead of trying to derive a unique DSN from the static endpoint.
+	if scheme, _, _ := strings.Cut(config.Endpoint, "://"); scheme == "rqlite" {
+		config.Endpoint = startRqlite(t)
+	}
 
 	// use a unique database for each test
 	dsn, err := setDatabasePath(config.Endpoint, cfg.Dir)
@@ -123,6 +131,10 @@ func setDatabasePath(endpoint, dir string) (string, error) {
 		//  mysql DSNs are not valid URLs, so just insert the hash before the query string, if any
 		path, query, _ := strings.Cut(endpoint, "?")
 		return path + hash + "?" + query, nil
+	case "rqlite":
+		// rqlite has no per-database routing; isolation is achieved by spawning a
+		// dedicated rqlite container per test (see startRqlite). Pass the endpoint through.
+		return endpoint, nil
 	default:
 		ep, err := url.Parse(endpoint)
 		if err != nil {
@@ -131,4 +143,65 @@ func setDatabasePath(endpoint, dir string) (string, error) {
 		ep.Path += hash
 		return ep.String(), nil
 	}
+}
+
+// startRqlite launches a single-node rqlite container for the lifetime of the test
+// and returns an rqlite:// endpoint kine can connect to. The container is removed
+// on test cleanup. This gives each rqlite-backed test a clean, isolated database,
+// since rqlite is a single-database server and cannot be partitioned by DSN.
+func startRqlite(t testing.TB) string {
+	t.Helper()
+
+	out, err := exec.Command("docker", "run", "-d", "--rm",
+		"rqlite/rqlite",
+	).CombinedOutput()
+	if err != nil {
+		t.Fatalf("Failed to start rqlite container: %v\n%s", err, out)
+	}
+	containerID := strings.TrimSpace(string(out))
+
+	t.Cleanup(func() {
+		if stopOut, stopErr := exec.Command("docker", "stop", containerID).CombinedOutput(); stopErr != nil {
+			t.Logf("docker stop %s: %v\n%s", containerID, stopErr, stopOut)
+		}
+	})
+
+	inspectOut, err := exec.Command("docker", "container", "inspect",
+		"-f", "{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}",
+		containerID,
+	).CombinedOutput()
+	if err != nil {
+		t.Fatalf("Failed to inspect rqlite container %s: %v\n%s", containerID, err, inspectOut)
+	}
+	containerIP := strings.TrimSpace(string(inspectOut))
+
+	t.Logf("docker rqlite container started as %s with IP %s", containerID, containerIP)
+
+	statusURL := fmt.Sprintf("http://%s:4001/readyz", containerIP)
+	deadline := time.Now().Add(120 * time.Second)
+	for {
+		resp, err := http.Get(statusURL)
+		if err == nil {
+			resp.Body.Close()
+			if resp.StatusCode == http.StatusOK {
+				break
+			}
+		}
+		if time.Now().After(deadline) {
+			if psOut, psErr := exec.Command("docker", "ps").CombinedOutput(); psErr != nil {
+				t.Logf("docker ps failed: %v\n%s", psErr, psOut)
+			} else {
+				t.Logf("docker ps: %s\n", psOut)
+			}
+			if logsOut, logsErr := exec.Command("docker", "logs", containerID).CombinedOutput(); logsErr != nil {
+				t.Logf("docker logs failed: %v\n%s", logsErr, logsOut)
+			} else {
+				t.Logf("docker logs: %s\n", logsOut)
+			}
+			t.Fatalf("rqlite container %s did not become ready within 120s", containerID)
+		}
+		time.Sleep(200 * time.Millisecond)
+	}
+
+	return fmt.Sprintf("rqlite://%s:4001", containerIP)
 }

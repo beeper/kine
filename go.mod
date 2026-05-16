@@ -1,6 +1,6 @@
 module github.com/k3s-io/kine
 
-go 1.25.0
+go 1.25.1
 
 require (
 	github.com/Rican7/retry v0.3.1
@@ -14,6 +14,7 @@ require (
 	github.com/nats-io/nats-server/v2 v2.14.0
 	github.com/nats-io/nats.go v1.51.0
 	github.com/prometheus/client_golang v1.23.2
+	github.com/rqlite/rqlite-go-http v0.0.0-20260505125655-87e042b65a23
 	github.com/shengdoushi/base58 v1.0.0
 	github.com/sirupsen/logrus v1.9.4
 	github.com/tidwall/btree v1.8.1
@@ -127,3 +128,5 @@ require (
 	sigs.k8s.io/structured-merge-diff/v6 v6.3.0 // indirect
 	sigs.k8s.io/yaml v1.6.0 // indirect
 )
+
+replace github.com/rqlite/rqlite-go-http => github.com/hifi/rqlite-go-http v0.0.0-20260516081207-a6d438cc1528
